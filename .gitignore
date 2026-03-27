@@ -1,0 +1,14 @@
+# Raw county data files - too large and contain PII
+data/*.txt
+data/*.zip
+data/*.xlsx
+data/*.pdf
+# Keep the processed Windbrook CSV
+!data/wynbrooke_parcels.csv
+# Python
+__pycache__/
+*.pyc
+.env
+# Claude
+.claude/
+data/wynbrooke_parcels.csv
