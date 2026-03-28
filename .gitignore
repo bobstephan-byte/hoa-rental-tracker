@@ -3,8 +3,9 @@ data/*.txt
 data/*.zip
 data/*.xlsx
 data/*.pdf
-# Keep the processed Windbrook CSV
+# Keep the processed Wynbrooke CSV and manual overrides
 !data/wynbrooke_parcels.csv
+!data/overrides.json
 # Python
 __pycache__/
 *.pyc
