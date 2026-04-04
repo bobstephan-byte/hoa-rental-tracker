@@ -9,6 +9,7 @@ data/*.pdf
 # Keep the processed Wynbrooke CSV and manual overrides
 !data/wynbrooke_parcels.csv
 !data/overrides.json
+!data/market_monitor_listings.json
 # Python
 __pycache__/
 *.pyc

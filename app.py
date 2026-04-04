@@ -5,6 +5,8 @@ Wynbrooke HOA — Rental Property Tracker Dashboard
 import json
 import os
 import re
+import subprocess
+import sys
 
 import pandas as pd
 import streamlit as st
@@ -18,6 +20,7 @@ st.set_page_config(
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_PATH = os.path.join(_BASE_DIR, "data", "wynbrooke_parcels.csv")
 OVERRIDES_PATH = os.path.join(_BASE_DIR, "data", "overrides.json")
+MARKET_MONITOR_PATH = os.path.join(_BASE_DIR, "data", "market_monitor_listings.json")
 
 
 # ── Overrides I/O ────────────────────────────────────────────────────────────
@@ -177,7 +180,7 @@ if section_filter:
 
 # ── Main content ─────────────────────────────────────────────────────────────
 
-tab_table, tab_analytics = st.tabs(["Property Table", "Analytics"])
+tab_table, tab_analytics, tab_market = st.tabs(["Property Table", "Analytics", "Market Monitor"])
 
 # ── Table tab ────────────────────────────────────────────────────────────────
 
@@ -352,3 +355,116 @@ with tab_analytics:
                         st.write(f"- {addr}")
     else:
         st.info("No repeat rental owners in current filter.")
+
+# ── Market Monitor tab ──────────────────────────────────────────────────────
+
+with tab_market:
+    st.subheader("Market Monitor — Active Listing Intelligence")
+
+    def load_market_data():
+        if os.path.exists(MARKET_MONITOR_PATH):
+            with open(MARKET_MONITOR_PATH, "r") as f:
+                return json.load(f)
+        return None
+
+    if st.button("Refresh Listings", type="primary"):
+        with st.spinner("Scanning RentCast for active listings..."):
+            result = subprocess.run(
+                [sys.executable, os.path.join(_BASE_DIR, "listings_scan.py")],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode == 0:
+                st.success("Listings refreshed successfully.")
+            else:
+                st.error(f"Scan failed: {result.stderr or result.stdout}")
+        st.rerun()
+
+    market_data = load_market_data()
+
+    if market_data is None:
+        st.info(
+            "No listing data available yet. Click **Refresh Listings** above "
+            "to scan for active for-sale and for-rent listings in the Wynbrooke area."
+        )
+    else:
+        sale_listings = [r for r in market_data if r["listing_type"] == "for_sale"]
+        rental_listings = [r for r in market_data if r["listing_type"] == "for_rent"]
+
+        at_risk = [r for r in sale_listings if r["current_status"] == "Owner-Occupied"]
+        relief = [r for r in sale_listings if r["current_status"] in ("Rental", "Likely Rental")]
+        rental_ads = rental_listings
+
+        # Last scanned timestamp
+        last_scanned = ""
+        if market_data:
+            last_scanned = market_data[0].get("last_scanned", "N/A")
+
+        # ── Summary metrics ─────────────────────────────────────────────
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("At-Risk Sales", len(at_risk),
+                   help="Owner-occupied homes listed for sale — could become rentals if bought by investors")
+        m2.metric("Relief Watch", len(relief),
+                   help="Confirmed rentals listed for sale — may return to owner-occupied status")
+        m3.metric("Active Rental Ads", len(rental_ads),
+                   help="Wynbrooke properties currently advertised for rent")
+        m4.metric("Last Scanned", last_scanned[:10] if last_scanned else "N/A")
+
+        # ── At-Risk Sales table ─────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("**At-Risk Sales** — Owner-occupied homes listed for sale")
+        st.caption("These could become rentals if purchased by investors.")
+        if at_risk:
+            at_risk_df = pd.DataFrame(at_risk)[
+                ["address", "current_status", "list_price", "days_on_market", "listing_agent"]
+            ].sort_values("days_on_market", ascending=True, na_position="last")
+            at_risk_df.columns = ["Address", "Current Status", "List Price", "Days on Market", "Agent"]
+            st.dataframe(at_risk_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No owner-occupied homes currently listed for sale in Wynbrooke.")
+
+        # ── Relief Watch table ──────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("**Relief Watch** — Rental properties listed for sale")
+        st.caption(
+            "These current rentals are for sale and may return to owner-occupied status, "
+            "potentially lowering the community's rental percentage."
+        )
+        if relief:
+            relief_df = pd.DataFrame(relief)[
+                ["address", "current_status", "list_price", "days_on_market", "listing_agent"]
+            ].sort_values("days_on_market", ascending=True, na_position="last")
+            relief_df.columns = ["Address", "Current Status", "List Price", "Days on Market", "Agent"]
+            st.dataframe(relief_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No rental properties currently listed for sale in Wynbrooke.")
+
+        # ── Active Rental Ads table ─────────────────────────────────────
+        st.markdown("---")
+        st.markdown("**Active Rental Ads** — Wynbrooke properties advertised for rent")
+        if rental_ads:
+            rental_df = pd.DataFrame(rental_ads)
+            # Flag potential violations
+            rental_df["flag"] = rental_df["current_status"].apply(
+                lambda s: "Potential Violation" if s == "Owner-Occupied" else ""
+            )
+            display_df = rental_df[
+                ["address", "current_status", "list_price", "days_on_market", "listing_agent", "flag"]
+            ].sort_values("days_on_market", ascending=True, na_position="last")
+            display_df.columns = ["Address", "Current Status", "Asking Rent", "Days Listed", "Agent", "Flag"]
+            st.dataframe(
+                display_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Flag": st.column_config.TextColumn(width="small"),
+                },
+            )
+            # Warn about potential violations
+            violations = rental_df[rental_df["flag"] == "Potential Violation"]
+            if not violations.empty:
+                st.warning(
+                    f"{len(violations)} listing(s) flagged: property is listed for rent but "
+                    f"recorded as owner-occupied — possible violation in progress."
+                )
+        else:
+            st.info("No Wynbrooke properties currently advertised for rent.")
